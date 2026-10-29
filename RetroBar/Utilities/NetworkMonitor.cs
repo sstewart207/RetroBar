@@ -313,6 +313,36 @@ namespace RetroBar.Utilities
             return 0;
         }
 
+        /// <summary>Physical interface counters only: never sum a VPN/virtual switch with its underlying link.</summary>
+        public static List<NetworkTrafficCounter> GetTrafficCounters()
+        {
+            if (GetIfTable2(out IntPtr table) != 0)
+                throw new NetworkInformationException();
+
+            try
+            {
+                var counters = new List<NetworkTrafficCounter>();
+                int count = Marshal.ReadInt32(table);
+                int size = Marshal.SizeOf<MIB_IF_ROW2>();
+                for (int i = 0; i < count; i++)
+                {
+                    var row = Marshal.PtrToStructure<MIB_IF_ROW2>(table + 8 + i * size);
+                    if (IsTrafficInterface(row.OperStatus, row.InterfaceAndOperStatusFlags))
+                        counters.Add(new NetworkTrafficCounter(row.InterfaceGuid, row.Alias,
+                            row.Statistics[2], row.Statistics[11]));
+                }
+                return counters;
+            }
+            finally
+            {
+                FreeMibTable(table);
+            }
+        }
+
+        public static bool IsTrafficInterface(int operStatus, byte flags) =>
+            operStatus == IfOperStatusUp && (flags & 0x05) == 0x05 &&
+            (flags & (IfFlagFilterInterface | 0x10 | 0x20 | 0x40 | 0x80)) == 0;
+
         private bool? GetHasInternet()
         {
             if (_networkListManager == null)
@@ -499,7 +529,7 @@ namespace RetroBar.Utilities
             public int MediaConnectState;
             public Guid NetworkGuid;
             public int ConnectionType;
-            // Link speeds and traffic counters, which we do not use
+            // Transmit/receive link speeds, then InOctets at [2] and OutOctets at [11].
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = 20)]
             public ulong[] Statistics;
         }
